@@ -26,13 +26,16 @@ from labscript_devices.NI_DAQmx.labscript_devices import NI_DAQmx
 CAPABILITIES = {
     'AI_range': None,
     'AI_range_Diff': None,
-    'AI_start_delay': None,
+    'AI_start_delay': 7e-08,
     'AO_range': [-10.0, 10.0],
     'max_AI_multi_chan_rate': None,
     'max_AI_single_chan_rate': None,
     'max_AO_sample_rate': 1000000.0,
     'max_DO_sample_rate': 10000000.0,
     'min_semiperiod_measurement': 2e-05,
+    'AI_term_cfg': {
+        'ai0': ['RSE', 'NRSE', 'Diff'],
+    },
     'num_AI': 0,
     'num_AO': 8,
     'num_CI': 2,
