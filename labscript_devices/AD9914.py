@@ -343,8 +343,8 @@ class AD9914Worker(Worker):
     def init(self):
         global h5py; import labscript_utils.h5_lock, h5py
 
-        # import os
-        # print(os.getcwd())
+        import os
+        print(os.getcwd())
 
         self._dll = windll.adiddseval
         #self._dll = windll.LoadLibrary(r"C:\labscript-suite\labscript-devices\labscript_devices\adiddseval.dll")
