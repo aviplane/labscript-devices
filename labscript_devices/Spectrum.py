@@ -1272,12 +1272,12 @@ class SpectrumWorker(Worker):
                                     else:  # static
                                         f1 = pulse.start
                                         method = b'linear'
-                                    if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 3) == 0 and dur > 100e-6:
+                                    if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 5) == 0 and dur > 100e-6:
                                         #                                    print(f"\t\t\t Generating tiled chirp from f0 = {pulse.start/1e6} to f1 = {f1/1e6}")
                                         loop_duration = 1 / \
                                             np.gcd(int(self.clock_freq), int(f1))
-                                        small_t = np.arange(
-                                            0, loop_duration, 1 / self.clock_freq)
+                                        print(loop_duration, f1/1e6)
+                                        small_t = np.arange(0, loop_duration, 1 / self.clock_freq)
                                         num_loops = int(dur / loop_duration)
                                         small_chirp = chirp(
                                             small_t, pulse.start, loop_duration, f1, phi=pulse.phase)
