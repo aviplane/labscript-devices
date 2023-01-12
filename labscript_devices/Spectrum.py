@@ -22,6 +22,7 @@ import time
 import ast
 import warnings
 from scipy.signal import chirp, sawtooth
+import scipy.special
 
 import gc
 
@@ -32,7 +33,7 @@ from .spcm.spcm_modulation_compensation import *
 from .spcm.numba_chirp import *
 
 import ctypes
-
+import inspect
 # decorate spectrum functions for error detection
 se.decorate_functions(sp, se.error_decorator)
 
@@ -49,6 +50,7 @@ class pulse():
         amplitude,
         ramp_type,
         painting_function=None,
+        painting_freq=False
     ):
         self.start = start_freq
         self.end = end_freq
@@ -62,11 +64,17 @@ class pulse():
             self.is_painted = False
         else:
             self.is_painted = True
-
+        self.painting_freq = painting_freq
 
     def __str__(self):
+        # Random number to never use smart programming
         if self.is_painted:
-            s = f"Painted sweep using function {self.painting_function}"
+            s = f"Painted sweep using function {self.painting_function} painting frequency: {self.painting_freq}"
+            try:
+                s = s + f"{self.painting_function.extra_params}"
+                print(s)
+            except Exception as e:
+                print(e)
             return s
         s = f"Ramp from {self.start} to {self.end} in t = {self.ramp_time} with amp = {self.amp}, "
         s = s + f"phase = {self.phase}"
@@ -75,11 +83,11 @@ class pulse():
 
 class waveform():
     def __init__(
-    self, time, duration, port, loops=1, is_periodic=False, pulses=[], delta_start=0, delta_end=0,
-    modulation_frequencies = [0],
-    modulation_amplitudes = [0],
-    modulation_phases = [0],
-    mask = None):
+            self, time, duration, port, loops=1, is_periodic=False, pulses=[], delta_start=0, delta_end=0,
+            modulation_frequencies=[0],
+            modulation_amplitudes=[0],
+            modulation_phases=[0],
+            mask=None):
         self.time = time  # chunks
         self.duration = duration  # chunks
         self.port = port  # int
@@ -113,13 +121,14 @@ class waveform():
         self.sample_end = duration
 
     def add_pulse(self,
-        start_freq,
-        end_freq,
-        ramp_time,
-        phase,
-        amplitude,
-        ramp_type,
-        painting_function=None):
+                  start_freq,
+                  end_freq,
+                  ramp_time,
+                  phase,
+                  amplitude,
+                  ramp_type,
+                  painting_function=None,
+                  painting_freq=False):
         self.pulses.append(
             pulse(
                 start_freq,
@@ -128,20 +137,20 @@ class waveform():
                 phase,
                 amplitude,
                 ramp_type,
-                painting_function = painting_function,
-                ))
+                painting_function=painting_function,
+                painting_freq=painting_freq
+            ))
 
     def __str__(self):
         s = "{(" + ",".join([str(i) for i in self.pulses]) +\
-         f") on ch. {self.port} at t = {self.time} in {self.duration} time with {self.loops} loops" +\
-         f", mod. freq. {self.modulation_frequencies}, mod. amp. {self.modulation_amplitudes} and mod. phases {self.modulation_phases}"+\
-         f".  self.has_mask = {self.has_mask}"+\
-         "}"
+            f") on ch. {self.port} at t = {self.time} in {self.duration} time with {self.loops} loops" +\
+            f", mod. freq. {self.modulation_frequencies}, mod. amp. {self.modulation_amplitudes} and mod. phases {self.modulation_phases}" +\
+            f".  self.has_mask = {self.has_mask}" +\
+            "}"
         return s
 
     def __eq__(self, other):
         return self.__dict__ == other.__dict__
-
 
     def __hash__(self):
         return hash(str(self))
@@ -264,47 +273,47 @@ class Spectrum(IntermediateDevice):
 
     # Functions that are simplifications on sweep_comb()
     def single_freq(self, t, duration, freq, amplitude, phase, ch, loops=1,
-                    modulation_frequencies = [0],
-                    modulation_amplitudes = [0],
-                    modulation_phases = [0], mask = None):
+                    modulation_frequencies=[0],
+                    modulation_amplitudes=[0],
+                    modulation_phases=[0], mask=None):
         if duration == 0:
             return t
         t = self.sweep_comb(t, duration, [freq], [freq], [
-                            amplitude], [phase], ch, 'static', loops, mask = mask)
+                            amplitude], [phase], ch, 'static', loops, mask=mask)
         return t
 
     def sweep(self, t, duration, start_freq, end_freq, amplitude, phase, ch, ramp_type, loops=1,
-              modulation_frequencies = [0],
-              modulation_amplitudes = [0],
-              modulation_phases = [0], mask = None):
+              modulation_frequencies=[0],
+              modulation_amplitudes=[0],
+              modulation_phases=[0], mask=None):
 
         t = self.sweep_comb(t, duration, [start_freq], [end_freq], [
                             amplitude], [phase], ch, ramp_type, loops,
                             modulation_frequencies=modulation_frequencies,
                             modulation_amplitudes=modulation_amplitudes,
                             modulation_phases=modulation_phases,
-                            mask = mask)
+                            mask=mask)
         return t
 
     def comb(self, t, duration, freqs, amplitudes, phases, ch, loops=1,
-            modulation_frequencies = [0],
-            modulation_amplitudes = [0],
-            modulation_phases = [0], mask = None):
+             modulation_frequencies=[0],
+             modulation_amplitudes=[0],
+             modulation_phases=[0], mask=None):
         t = self.sweep_comb(
-            t = t,
-            duration = duration,
-            start_freqs = freqs,
-            end_freqs = freqs,
-            amplitudes = amplitudes,
-            phases = phases,
-            ch = ch,
-            ramp_type = 'static',
-            loops = loops,
-            modulation_frequencies = modulation_frequencies,
-            modulation_amplitudes = modulation_amplitudes,
-            modulation_phases = modulation_phases,
-            mask = mask
-            )
+            t=t,
+            duration=duration,
+            start_freqs=freqs,
+            end_freqs=freqs,
+            amplitudes=amplitudes,
+            phases=phases,
+            ch=ch,
+            ramp_type='static',
+            loops=loops,
+            modulation_frequencies=modulation_frequencies,
+            modulation_amplitudes=modulation_amplitudes,
+            modulation_phases=modulation_phases,
+            mask=mask
+        )
         return t
 
     def check_waveform_parameters(self, t, duration, ch, loops, modulation_amplitudes):
@@ -328,8 +337,9 @@ class Spectrum(IntermediateDevice):
             raise LabscriptError(
                 'Too many loops requested. Number of loops must be less than 2^20 = 1,048,576')
         if len(modulation_amplitudes) > 0:
-            if np.max(np.abs(modulation_amplitudes)) > 1 or np.round(np.sum(np.abs(modulation_amplitudes)),decimals=4) > 1:
-                raise LabscriptError("Magintude of total modulation amplitude must be less than 1.")
+            if np.max(np.abs(modulation_amplitudes)) > 1 or np.round(np.sum(np.abs(modulation_amplitudes)), decimals=4) > 1:
+                raise LabscriptError(
+                    "Magintude of total modulation amplitude must be less than 1.")
         return True
 
     def sweep_comb(
@@ -339,16 +349,17 @@ class Spectrum(IntermediateDevice):
         amplitudes, phases, ch,
         ramp_type,
         loops=1,
-        modulation_frequencies = [0],
-        modulation_amplitudes = [0],
-        modulation_phases = [0],
-        mask = None
-        ):
+        modulation_frequencies=[0],
+        modulation_amplitudes=[0],
+        modulation_phases=[0],
+        mask=None
+    ):
         """
         Fundamental function that allows a user to initialize a waveform.
         """
         # Check for common problems in a waveform
-        self.check_waveform_parameters(t, duration, ch, loops, modulation_amplitudes)
+        self.check_waveform_parameters(
+            t, duration, ch, loops, modulation_amplitudes)
 
         # Convert from time in seconds to time in sample chunks (1 sample chunk = 32 samples)
         t_start_c, delta_start = st.time_s_to_c(
@@ -379,10 +390,10 @@ class Spectrum(IntermediateDevice):
 
         wvf = waveform(t_start_c, duration_c, ch, loops, is_periodic=(
             loops > 1), delta_start=delta_start, delta_end=delta_end,
-              modulation_frequencies = modulation_frequencies,
-              modulation_amplitudes = modulation_amplitudes,
-              modulation_phases = modulation_phases,
-              mask = mask)
+            modulation_frequencies=modulation_frequencies,
+            modulation_amplitudes=modulation_amplitudes,
+            modulation_phases=modulation_phases,
+            mask=mask)
         assert len(start_freqs) == len(
             end_freqs), "Start and End frequencies must be same length"
         assert len(phases) == len(
@@ -396,13 +407,13 @@ class Spectrum(IntermediateDevice):
 
             wvf.add_pulse(start_freqs[i], end_freqs[i],
                           duration, phases[i], amplitudes[i], ramp_type,
-                          painting_function = None)
+                          painting_function=None)
 
         self.raw_waveforms.append(wvf)
 
         return t + (loops * duration)
 
-    def painted_sweep(self, t, duration, amplitude, painting_function, ch, loops=1):
+    def painted_sweep(self, t, duration, amplitude, painting_function, ch, painting_freq=False, loops=1):
         """
         Basic function for generating a painted potential.
 
@@ -416,8 +427,11 @@ class Spectrum(IntermediateDevice):
             Amplitude of waveform, must be between 0, 1.
         painting_function: function (float -> float)
             Function generating frequency (Hz) as a function of t(s)
+        painting_freq: bool
+            Is this function specifiying frequency(time)?  Default is phase(time)
         loops: int
             Number of times to play this sequence.
+
 
         Returns
         --------
@@ -425,7 +439,8 @@ class Spectrum(IntermediateDevice):
             The time at which the sequence ends (including loops)
         """
         # Check timing parameters
-        self.check_waveform_parameters(t, duration, ch, loops)
+        self.check_waveform_parameters(
+            t, duration, ch, loops, modulation_amplitudes=[])
         t_start_c, delta_start = st.time_s_to_c(
             t, self.sample_data.clock_freq, extend=False)
         # extend duration to fill chunks, not truncate
@@ -466,7 +481,9 @@ class Spectrum(IntermediateDevice):
             phase=0,
             amplitude=amplitude,
             ramp_type="None",
-            painting_function=painting_function)
+            painting_function=painting_function,
+            painting_freq=painting_freq
+        )
 
         self.raw_waveforms.append(wvf)
 
@@ -537,18 +554,20 @@ class Spectrum(IntermediateDevice):
                 else:
                     grp = group_folder.create_group(name)
                     profile_dtypes = [
-                    ('time', int),
-                    ('duration', int),
-                    ('loops', int),
-                    ('port', int),
-                    ('sample_start', int),
-                    ('sample_end', int),
-                    ('delta_start', int),
-                    ('delta_end', int),
-                    ('modulation_frequencies', float, len(wvf.modulation_frequencies)),
-                    ('modulation_amplitudes', float, len(wvf.modulation_amplitudes)),
-                    ('modulation_phases', float, len(wvf.modulation_phases)),
-                    ('mask', dill_function_type),]
+                        ('time', int),
+                        ('duration', int),
+                        ('loops', int),
+                        ('port', int),
+                        ('sample_start', int),
+                        ('sample_end', int),
+                        ('delta_start', int),
+                        ('delta_end', int),
+                        ('modulation_frequencies', float,
+                         len(wvf.modulation_frequencies)),
+                        ('modulation_amplitudes', float,
+                         len(wvf.modulation_amplitudes)),
+                        ('modulation_phases', float, len(wvf.modulation_phases)),
+                        ('mask', dill_function_type), ]
                     profile_table = np.zeros(1, dtype=profile_dtypes)
                     profile_table['time'] = wvf.time
                     profile_table['duration'] = wvf.duration
@@ -561,7 +580,8 @@ class Spectrum(IntermediateDevice):
                     profile_table['modulation_frequencies'] = wvf.modulation_frequencies
                     profile_table['modulation_amplitudes'] = wvf.modulation_amplitudes
                     profile_table['modulation_phases'] = wvf.modulation_phases
-                    profile_table['mask'] = str(pickle.dumps(wvf.mask, recurse=True))
+                    profile_table['mask'] = str(
+                        pickle.dumps(wvf.mask, recurse=True))
                     grp.create_dataset('waveform_settings', data=profile_table)
 
                 if wvf.duration == 0:
@@ -575,7 +595,8 @@ class Spectrum(IntermediateDevice):
                                   ('phase', np.float),
                                   ('amp', np.float),
                                   ('ramp_type', "S10"),
-                                  ('painting_function', dill_function_type),]  # Maybe this shouln't be s10
+                                  ('painting_function', dill_function_type),
+                                  ('painting_freq', np.bool)]
                 profile_table = np.zeros(len(wvf.pulses), dtype=profile_dtypes)
 
                 if len(wvf.pulses) == 0:
@@ -590,11 +611,12 @@ class Spectrum(IntermediateDevice):
                     profile_table['amp'][j] = pulse.amp
                     profile_table['ramp_type'][j] = pulse.ramp_type
                     # write function to h5 file
-                    pickled_function = str(pickle.dumps(
+                    pickled_function = repr(pickle.dumps(
                         pulse.painting_function, recurse=True))
                     # if pulse.is_painted:
                     profile_table['painting_function'] = pickled_function
-
+                    print(pickled_function)
+                    profile_table['painting_freq'][j] = pulse.painting_freq
                 # If waveform already has associated data, add to the existing dataset.
                 if 'pulse_data' in grp:
                     d = grp['pulse_data']
@@ -794,6 +816,7 @@ class Spectrum(IntermediateDevice):
                             self.samplesPerChunk - wvf_0.delta_end
                         t_1 = wvf_1.time * self.samplesPerChunk + wvf_1.delta_start
                         if t_0 > t_1:
+                            print(group)
                             raise LabscriptError(
                                 "Port collision: you've instructed port {} to play two waveforms at once.".format(port))
 
@@ -1239,7 +1262,7 @@ class SpectrumWorker(Worker):
 
                 np_waveform = np.zeros(
                     self.num_chs * group.duration * samples_per_chunk, dtype=sp.int16)
-                    #                print(f"\t Filling buffer {seg_idx}: t = {time.time() - start_time}")
+                #                print(f"\t Filling buffer {seg_idx}: t = {time.time() - start_time}")
                 # Fill buffer
                 if group.waveforms != 'dummy':
                     for wvf in group.waveforms:
@@ -1255,15 +1278,18 @@ class SpectrumWorker(Worker):
                         pulse_data = np.zeros(len(t))
                         if hash(wvf) in self.pulse_dictionary.keys():
                             print("Found waveform")
-
                             pulse_data = self.pulse_dictionary[hash(wvf)]
                         else:
                             for pulse in wvf.pulses:
                                 if pulse.is_painted:
-                                    # print("\t\t\t Generating painted pulse")
-                                    phase_values = 2 * np.pi * \
-                                        np.cumsum(pulse.painting_function(
-                                            t) * 1 / self.clock_freq)
+                                    print("\t\t\t Generating painted pulse")
+                                    if pulse.painting_freq:
+                                        phase_values = 2 * np.pi * \
+                                            np.cumsum(pulse.painting_function(
+                                                t) * 1 / self.clock_freq)
+                                    else:
+                                        phase_values = 2 * pi / 360 * \
+                                            pulse.painting_function(t)
                                     c = np.sin(phase_values)
                                 else:
                                     if pulse.ramp_type != b'static':  # ramping
@@ -1275,9 +1301,11 @@ class SpectrumWorker(Worker):
                                     if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 5) == 0 and dur > 100e-6:
                                         #                                    print(f"\t\t\t Generating tiled chirp from f0 = {pulse.start/1e6} to f1 = {f1/1e6}")
                                         loop_duration = 1 / \
-                                            np.gcd(int(self.clock_freq), int(f1))
-                                        print(loop_duration, f1/1e6)
-                                        small_t = np.arange(0, loop_duration, 1 / self.clock_freq)
+                                            np.gcd(
+                                                int(self.clock_freq), int(f1))
+                                        print(loop_duration, f1 / 1e6)
+                                        small_t = np.arange(
+                                            0, loop_duration, 1 / self.clock_freq)
                                         num_loops = int(dur / loop_duration)
                                         small_chirp = chirp(
                                             small_t, pulse.start, loop_duration, f1, phi=pulse.phase)
@@ -1318,34 +1346,42 @@ class SpectrumWorker(Worker):
                                         print(
                                             f"\t\t\t Generated untiled chirp: t = {time.time() - start_time}")
 
-                                            # print(f"Generated chirp from f = {pulse.start} to f = {pulse.end} in t = {dur}")
+                                        # print(f"Generated chirp from f = {pulse.start} to f = {pulse.end} in t = {dur}")
                                 pulse_data += pulse.amp * (2**15 - 1) * c
                                 # print(f"\t\t\t Added to pulse: t = {time.time() - start_time}")
 
-                            modulation_waveform = np.sum([amp*(1/2 * np.cos(2 * np.pi * (freq * t) + phase * pi/180) +1/2)
+                            modulation_waveform = np.sum([amp * (1 / 2 * np.cos(2 * np.pi * (freq * t) + phase * pi / 180) + 1 / 2)
                                                           for freq, amp, phase in zip(wvf.modulation_frequencies,
                                                                                       wvf.modulation_amplitudes,
-                                                                                      wvf.modulation_phases)], axis = 0)
+                                                                                      wvf.modulation_phases)], axis=0)
                             print(wvf.modulation_frequencies)
-                            total_modulation = np.sum(wvf.modulation_amplitudes)
+                            total_modulation = np.sum(
+                                wvf.modulation_amplitudes)
                             print(f"Total Modulation: {total_modulation}")
-                            ### Remove negative amplitudes
+                            # Remove negative amplitudes
                             # modulation_waveform = modulation_waveform - np.min(modulation_waveform) # + 1/2
-                            ### Scale top to be <= 1
-                            modulation_waveform = modulation_waveform/np.max(modulation_waveform) if np.max(modulation_waveform) > 0 else modulation_waveform
-                            ### DC Offset if sum(amplitudes) < 1
-                            modulation_waveform = total_modulation *  modulation_waveform + (1 - total_modulation)
+                            # Scale top to be <= 1
+                            modulation_waveform = modulation_waveform / \
+                                np.max(modulation_waveform) if np.max(
+                                    modulation_waveform) > 0 else modulation_waveform
+                            # DC Offset if sum(amplitudes) < 1
+                            modulation_waveform = total_modulation * \
+                                modulation_waveform + (1 - total_modulation)
                             #
                             #
                             # modulation_waveform = modulation_waveform + 1/2
-                            modulation_waveform = amplitude_compensator(modulation_waveform)
-                            assert np.min(modulation_waveform) >=0 and  np.max(modulation_waveform) <= 1, "Modulation is too big"
+                            modulation_waveform = amplitude_compensator(
+                                modulation_waveform)
+                            assert np.min(modulation_waveform) >= 0 and np.max(
+                                modulation_waveform) <= 1, "Modulation is too big"
                             assert pulse_data.shape == modulation_waveform.shape, "Modulation waveform has wrong shape"
 
                             pulse_data = modulation_waveform * pulse_data
                             mask_values = wvf.mask(t)
-                            assert np.min(mask_values) >=0, "Mask gets too small"
-                            assert np.min(mask_values) <=1, "Mask gets too large"
+                            assert np.min(
+                                mask_values) >= 0, "Mask gets too small"
+                            assert np.min(
+                                mask_values) <= 1, "Mask gets too large"
                             assert pulse_data.shape == mask_values.shape, "Mask must have same shape as waveform"
 
                             pulse_data = mask_values * pulse_data
@@ -1359,7 +1395,9 @@ class SpectrumWorker(Worker):
                             if dur > 200e-6 and not wvf.has_mask:
                                 self.pulse_dictionary[hash(wvf)] = pulse_data
 
-                        print(self.pulse_dictionary.keys())
+                        print(f"Pulse dictionary has size: {len(self.pulse_dictionary.keys())}")
+                        if len(self.pulse_dictionary.keys()) > 100:
+                            self.pulse_dictionary.clear()
 
                         port_index = sorted(self.enabled_ports).index(wvf.port)
 
@@ -1466,7 +1504,7 @@ class SpectrumWorker(Worker):
 
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
         self.waveform_groups = []
-        with h5py.File(h5file) as file:
+        with h5py.File(h5file, 'r') as file:
             device = file['/devices/' + device_name]
             device_dict = self.h5group_to_dict(device)
             try:
@@ -1525,12 +1563,15 @@ class SpectrumWorker(Worker):
                                 wvf.sample_end = s['waveform_settings']['sample_end'][0]
                                 wvf.delta_start = s['waveform_settings']['delta_start'][0]
                                 wvf.delta_end = s['waveform_settings']['delta_end'][0]
-                                wvf.modulation_frequencies = s['waveform_settings']['modulation_frequencies'].ravel()
-                                wvf.modulation_amplitudes = s['waveform_settings']['modulation_amplitudes'].ravel()
-                                wvf.modulation_phases = s['waveform_settings']['modulation_phases'].ravel()
+                                wvf.modulation_frequencies = s['waveform_settings']['modulation_frequencies'].ravel(
+                                )
+                                wvf.modulation_amplitudes = s['waveform_settings']['modulation_amplitudes'].ravel(
+                                )
+                                wvf.modulation_phases = s['waveform_settings']['modulation_phases'].ravel(
+                                )
                                 mask_str = s['waveform_settings']['mask'][0]
                                 mask_pickle = bytes(
-                                    ast.literal_eval(mask_str))
+                                    eval(mask_str))
                                 mask = pickle.loads(mask_pickle)
                                 wvf.mask = mask
                             if p == 'pulse_data':
@@ -1542,10 +1583,13 @@ class SpectrumWorker(Worker):
                                     phase = dset['phase'][i]
                                     amplitude = dset['amp'][i]
                                     ramp_type = dset['ramp_type'][i]
+                                    painting_freq = dset['painting_freq'][i]
                                     # Convert painting function string back to function
                                     painting_function_str = dset['painting_function'][i]
+                                    print("painting_function_str", painting_function_str)
                                     painting_function_pickle = bytes(
-                                        ast.literal_eval(painting_function_str))
+                                        eval(painting_function_str))
+                                    print("painting_function_pickle", painting_function_pickle)
                                     painting_function = pickle.loads(
                                         painting_function_pickle)
                                     wvf.add_pulse(
@@ -1555,7 +1599,8 @@ class SpectrumWorker(Worker):
                                         phase,
                                         amplitude,
                                         ramp_type,
-                                        painting_function=painting_function
+                                        painting_function=painting_function,
+                                        painting_freq=painting_freq
                                     )
                         waveforms.append(wvf)
 
@@ -1605,3 +1650,4 @@ class SpectrumWorker(Worker):
     def shutdown(self):
         sp.spcm_dwSetParam_i32(self.card, sp.SPC_M2CMD, sp.M2CMD_CARD_STOP)
         sp.spcm_vClose(self.card)
+ 

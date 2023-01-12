@@ -345,9 +345,10 @@ class AD9914Worker(Worker):
 
         import os
         print(os.getcwd())
-
-        self._dll = windll.adiddseval
-        #self._dll = windll.LoadLibrary(r"C:\labscript-suite\labscript-devices\labscript_devices\adiddseval.dll")
+        
+        # 01/11/2023: switched to full path, which prevented the error of not finding adiddseval
+        # self._dll = windll.adiddseval
+        self._dll = windll.LoadLibrary(r"C:\labscript-suite\labscript-devices\labscript_devices\adiddseval.dll")
 
         self._fFindHardware = self._dll.FindHardware
         self._fGetHardwareHandles = self._dll.GetHardwareHandles
@@ -757,7 +758,7 @@ class AD9914Worker(Worker):
         profile_data = None
         sweep_data = None
 
-        with h5py.File(h5file) as hdf5_file:
+        with h5py.File(h5file, 'r') as hdf5_file:
             group = hdf5_file['/devices/'+device_name]
             # If there are values to set the unbuffered outputs to, set them now:
             if 'PROFILE_DATA' in group:
