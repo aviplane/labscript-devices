@@ -615,7 +615,6 @@ class Spectrum(IntermediateDevice):
                         pulse.painting_function, recurse=True))
                     # if pulse.is_painted:
                     profile_table['painting_function'] = pickled_function
-                    print(pickled_function)
                     profile_table['painting_freq'][j] = pulse.painting_freq
                 # If waveform already has associated data, add to the existing dataset.
                 if 'pulse_data' in grp:
@@ -1586,10 +1585,8 @@ class SpectrumWorker(Worker):
                                     painting_freq = dset['painting_freq'][i]
                                     # Convert painting function string back to function
                                     painting_function_str = dset['painting_function'][i]
-                                    print("painting_function_str", painting_function_str)
                                     painting_function_pickle = bytes(
                                         eval(painting_function_str))
-                                    print("painting_function_pickle", painting_function_pickle)
                                     painting_function = pickle.loads(
                                         painting_function_pickle)
                                     wvf.add_pulse(
