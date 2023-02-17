@@ -56,7 +56,7 @@ import numpy as np
 class DummyIntermediateDevice(IntermediateDevice):
 
     description = 'Dummy IntermediateDevice'
-    clock_limit = 1e6
+    clock_limit = 100e6
 
     # If this is updated, then you need to update generate_code to support whatever types you add
     allowed_children = [DigitalOut, AnalogOut]

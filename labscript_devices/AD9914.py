@@ -397,10 +397,10 @@ class AD9914Worker(Worker):
 
         self.IOUpdate()
 
+
         # Hack - must always restart device on first startup
         if self.ReadRegister(0) != reg0:
             raise LabscriptError("Registers did not reset correctly - please restart the device")
-
 
         # for addr in range(18):
         #     print repr(self.ReadRegister(addr))
@@ -575,7 +575,7 @@ class AD9914Worker(Worker):
         return (POWint / 2**16) * 360
 
     def CalcASF (self, ampl):     # ampl as a fraction of full amplitude
-
+        ampl = min(ampl, 1)
         if ampl == 1.0:
             ASFint = 2**12 - 1
         else:
@@ -689,6 +689,7 @@ class AD9914Worker(Worker):
                 print('Port ' + str(r) + ':\t' + str(self.GetPortValue(r)))
 
     def check_remote_values(self):
+        print("Checking remote")
 
         results = {}
 
@@ -701,21 +702,24 @@ class AD9914Worker(Worker):
             phAmplData = self.ReadRegister(12 + 2 * profile)
             results['profile %d'%profile]['phase'] = self.CalcPhase(phAmplData[:2])
             results['profile %d'%profile]['amp'] = self.CalcAmpl(phAmplData[2:])
+        print("Checked remote", results)
         return results
 
 
     def program_manual(self,front_panel_values):
+        print("Programming manual")
         for profile in front_panel_values:
             for subchnl in ['freq','amp','phase']:
                 self.program_static(profile,subchnl,front_panel_values[profile][subchnl])
 
         self.IOUpdate()
+
         return self.check_remote_values()
 
     def program_static(self,profile,type,value):
-
         profile = int(profile[-1:])
 
+        print(value, type)
         if type == 'freq':
             addr = 11 + 2 * profile
             self.WriteRegister(addr, self.CalcFTW(value))
