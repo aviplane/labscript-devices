@@ -575,6 +575,7 @@ class AD9914Worker(Worker):
         return (POWint / 2**16) * 360
 
     def CalcASF (self, ampl):     # ampl as a fraction of full amplitude
+        print("ASF ampl: ", ampl)
         ampl = min(ampl, 1)
         if ampl == 1.0:
             ASFint = 2**12 - 1
