@@ -3,6 +3,8 @@ from __future__ import division, unicode_literals, print_function, absolute_impo
 from labscript_utils import check_version
 check_version('labscript', '2.0.1', '4')
 check_version('zprocess', '2.4.8', '4')
+import labscript_utils.h5_lock
+
 # # from labscript_utils import PY2
 # if PY2:
 #     str = unicode

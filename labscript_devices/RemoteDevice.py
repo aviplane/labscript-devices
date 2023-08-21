@@ -6,6 +6,7 @@ check_version('zprocess', '2.4.8', '4')
 # # from labscript_utils import PY2
 # if PY2:
 #     str = unicode
+import labscript_utils.h5_lock
 
 from labscript_devices import BLACS_tab
 from labscript import Device, LabscriptError, set_passed_properties

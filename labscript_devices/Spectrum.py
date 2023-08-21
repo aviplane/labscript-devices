@@ -50,7 +50,8 @@ class pulse():
         amplitude,
         ramp_type,
         painting_function=None,
-        painting_freq=False
+        painting_freq=False,
+        painting_list = False
     ):
         self.start = start_freq
         self.end = end_freq
@@ -65,11 +66,12 @@ class pulse():
         else:
             self.is_painted = True
         self.painting_freq = painting_freq
+        self.painting_list = painting_list
 
     def __str__(self):
         # Random number to never use smart programming
         if self.is_painted:
-            s = f"Painted sweep using function {self.painting_function} painting frequency: {self.painting_freq}"
+            s = f"Painted sweep using function {self.painting_function} painting frequency: {self.painting_freq}, painting_list: {self.painting_list}"
             try:
                 s = s + f"{self.painting_function.extra_params}"
                 print(s)
@@ -128,7 +130,8 @@ class waveform():
                   amplitude,
                   ramp_type,
                   painting_function=None,
-                  painting_freq=False):
+                  painting_freq=False,
+                  painting_list = False):
         self.pulses.append(
             pulse(
                 start_freq,
@@ -138,14 +141,15 @@ class waveform():
                 amplitude,
                 ramp_type,
                 painting_function=painting_function,
-                painting_freq=painting_freq
+                painting_freq=painting_freq,
+                painting_list = painting_list
             ))
 
     def __str__(self):
         s = "{(" + ",".join([str(i) for i in self.pulses]) +\
             f") on ch. {self.port} at t = {self.time} in {self.duration} time with {self.loops} loops" +\
             f", mod. freq. {self.modulation_frequencies}, mod. amp. {self.modulation_amplitudes} and mod. phases {self.modulation_phases}" +\
-            f".  self.has_mask = {self.has_mask}" +\
+            f".  self.has_mask = {self.has_mask * np.random.rand(1)}" +\
             "}"
         return s
 
@@ -413,7 +417,7 @@ class Spectrum(IntermediateDevice):
 
         return t + (loops * duration)
 
-    def painted_sweep(self, t, duration, amplitude, painting_function, ch, painting_freq=False, loops=1):
+    def painted_sweep(self, t, duration, amplitude, painting_function, ch, phase = 0, painting_freq=False, painting_list = False, loops=1):
         """
         Basic function for generating a painted potential.
 
@@ -478,11 +482,12 @@ class Spectrum(IntermediateDevice):
             start_freq=0,
             end_freq=0,
             ramp_time=duration,
-            phase=0,
+            phase=phase,
             amplitude=amplitude,
             ramp_type="None",
             painting_function=painting_function,
-            painting_freq=painting_freq
+            painting_freq=painting_freq,
+            painting_list=painting_list,
         )
 
         self.raw_waveforms.append(wvf)
@@ -567,7 +572,8 @@ class Spectrum(IntermediateDevice):
                         ('modulation_amplitudes', float,
                          len(wvf.modulation_amplitudes)),
                         ('modulation_phases', float, len(wvf.modulation_phases)),
-                        ('mask', dill_function_type), ]
+                        ('mask', dill_function_type), 
+                        ('has_mask', bool)]
                     profile_table = np.zeros(1, dtype=profile_dtypes)
                     profile_table['time'] = wvf.time
                     profile_table['duration'] = wvf.duration
@@ -582,6 +588,7 @@ class Spectrum(IntermediateDevice):
                     profile_table['modulation_phases'] = wvf.modulation_phases
                     profile_table['mask'] = str(
                         pickle.dumps(wvf.mask, recurse=True))
+                    profile_table['has_mask'] = wvf.has_mask
                     grp.create_dataset('waveform_settings', data=profile_table)
 
                 if wvf.duration == 0:
@@ -596,7 +603,8 @@ class Spectrum(IntermediateDevice):
                                   ('amp', np.float),
                                   ('ramp_type', "S10"),
                                   ('painting_function', dill_function_type),
-                                  ('painting_freq', np.bool)]
+                                  ('painting_freq', np.bool),
+                                  ('painting_list', np.bool)]
                 profile_table = np.zeros(len(wvf.pulses), dtype=profile_dtypes)
 
                 if len(wvf.pulses) == 0:
@@ -616,6 +624,7 @@ class Spectrum(IntermediateDevice):
                     # if pulse.is_painted:
                     profile_table['painting_function'] = pickled_function
                     profile_table['painting_freq'][j] = pulse.painting_freq
+                    profile_table['painting_list'][j] = pulse.painting_list
                 # If waveform already has associated data, add to the existing dataset.
                 if 'pulse_data' in grp:
                     d = grp['pulse_data']
@@ -1275,12 +1284,17 @@ class SpectrumWorker(Worker):
                         t = np.arange(0, dur, 1 / self.clock_freq)
 
                         pulse_data = np.zeros(len(t))
-                        if hash(wvf) in self.pulse_dictionary.keys():
+ 
+                        if hash(wvf) in self.pulse_dictionary.keys() and not wvf.has_mask:
                             print("Found waveform")
                             pulse_data = self.pulse_dictionary[hash(wvf)]
                         else:
                             for pulse in wvf.pulses:
-                                if pulse.is_painted:
+                                if pulse.painting_list:
+                                    phase_values = 2 * pi * np.cumsum(pulse.painting_function(t) * 1/self.clock_freq, axis = 1)
+                                    output = np.sin(phase_values)/phase_values.shape[0]
+                                    c = np.sum(output, axis = 0)
+                                elif pulse.is_painted:
                                     print("\t\t\t Generating painted pulse")
                                     if pulse.painting_freq:
                                         phase_values = 2 * np.pi * \
@@ -1298,24 +1312,22 @@ class SpectrumWorker(Worker):
                                         f1 = pulse.start
                                         method = b'linear'
                                     if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 5) == 0 and dur > 100e-6:
-                                        #                                    print(f"\t\t\t Generating tiled chirp from f0 = {pulse.start/1e6} to f1 = {f1/1e6}")
                                         loop_duration = 1 / \
                                             np.gcd(
                                                 int(self.clock_freq), int(f1))
-                                        print(loop_duration, f1 / 1e6)
                                         small_t = np.arange(
                                             0, loop_duration, 1 / self.clock_freq)
                                         num_loops = int(dur / loop_duration)
                                         small_chirp = chirp(
                                             small_t, pulse.start, loop_duration, f1, phi=pulse.phase)
-                                        # small_chirp_numba = numba_chirp(
-                                        #     small_t,
-                                        #     f0=pulse.start,
-                                        #     t1=loop_duration,
-                                        #     f1=f1,
-                                        #     phi=pulse.phase
-                                        # )
-                                        # assert np.max(np.abs(small_chirp - small_chirp_numba)) < 1e-10, "Numba small chirp not equivalent to scipy small chirp"
+                                        small_chirp_numba = numba_chirp(
+                                             small_t,
+                                             f0=pulse.start,
+                                             t1=loop_duration,
+                                             f1=f1,
+                                             phi=pulse.phase
+                                        )
+                                        assert np.max(np.abs(small_chirp - small_chirp_numba)) < 1e-10, "Numba small chirp not equivalent to scipy small chirp"
                                         c2 = np.tile(small_chirp, num_loops)
                                         if len(t) - len(c2) > 0:
                                             print(
@@ -1324,7 +1336,6 @@ class SpectrumWorker(Worker):
                                             c2,
                                             [0] * (len(t) - len(c2))
                                         ])
-                                        # print(f"\t\t\t Generated tiled chirp: t = {time.time() - start_time}")
                                     else:
                                         c = chirp(
                                             t,
@@ -1334,31 +1345,19 @@ class SpectrumWorker(Worker):
                                             method=method.decode(),
                                             phi=pulse.phase
                                         )
-                                        # c = numba_chirp(t,
-                                        #                  f0=pulse.start,
-                                        #                  t1=pulse.ramp_time,
-                                        #                  f1=f1,
-                                        #                  phi=pulse.phase)
-
-                                        # assert np.max(np.abs(
-                                        #     c - c2)) < 1e-8, f"Numba chirp not equivalent to scipy chirp!, {np.max(np.abs(c - c2))}, {pulse.start}"
                                         print(
                                             f"\t\t\t Generated untiled chirp: t = {time.time() - start_time}")
 
-                                        # print(f"Generated chirp from f = {pulse.start} to f = {pulse.end} in t = {dur}")
                                 pulse_data += pulse.amp * (2**15 - 1) * c
-                                # print(f"\t\t\t Added to pulse: t = {time.time() - start_time}")
 
                             modulation_waveform = np.sum([amp * (1 / 2 * np.cos(2 * np.pi * (freq * t) + phase * pi / 180) + 1 / 2)
                                                           for freq, amp, phase in zip(wvf.modulation_frequencies,
                                                                                       wvf.modulation_amplitudes,
                                                                                       wvf.modulation_phases)], axis=0)
-                            print(wvf.modulation_frequencies)
-                            total_modulation = np.sum(
-                                wvf.modulation_amplitudes)
-                            print(f"Total Modulation: {total_modulation}")
+
+                            total_modulation = np.max(modulation_waveform)#np.sum(wvf.modulation_amplitudes)
                             # Remove negative amplitudes
-                            # modulation_waveform = modulation_waveform - np.min(modulation_waveform) # + 1/2
+                            modulation_waveform = modulation_waveform - np.min(modulation_waveform) # + 1/2
                             # Scale top to be <= 1
                             modulation_waveform = modulation_waveform / \
                                 np.max(modulation_waveform) if np.max(
@@ -1376,25 +1375,26 @@ class SpectrumWorker(Worker):
                             assert pulse_data.shape == modulation_waveform.shape, "Modulation waveform has wrong shape"
 
                             pulse_data = modulation_waveform * pulse_data
-                            mask_values = wvf.mask(t)
+                            mask_values = wvf.mask(t) #should we only do this if has mask for extra speed?
+
                             assert np.min(
-                                mask_values) >= 0, "Mask gets too small"
-                            assert np.min(
+                                mask_values) >= -1, f"Mask gets too small, {mask_values}"
+                            assert np.max(
                                 mask_values) <= 1, "Mask gets too large"
                             assert pulse_data.shape == mask_values.shape, "Mask must have same shape as waveform"
-
+                            print(np.min(mask_values), np.max(mask_values), "MASK")
                             pulse_data = mask_values * pulse_data
+                            print(np.min(pulse_data), np.max(pulse_data), "data")
 
                             if np.max(pulse_data) > (2**15 - 1):
                                 raise LabscriptError(
                                     'Maximum value of pulse_data exceeds 2**15-1, will overflow when cast to sp.int16')
 
                             pulse_data = pulse_data.astype(sp.int16)
-
                             if dur > 200e-6 and not wvf.has_mask:
                                 self.pulse_dictionary[hash(wvf)] = pulse_data
 
-                        print(f"Pulse dictionary has size: {len(self.pulse_dictionary.keys())}")
+                        #print(f"Pulse dictionary has size: {len(self.pulse_dictionary.keys())}")
                         if len(self.pulse_dictionary.keys()) > 100:
                             self.pulse_dictionary.clear()
 
@@ -1568,6 +1568,7 @@ class SpectrumWorker(Worker):
                                 )
                                 wvf.modulation_phases = s['waveform_settings']['modulation_phases'].ravel(
                                 )
+                                wvf.has_mask = s['waveform_settings']['has_mask'][0]
                                 mask_str = s['waveform_settings']['mask'][0]
                                 mask_pickle = bytes(
                                     eval(mask_str))
@@ -1583,6 +1584,7 @@ class SpectrumWorker(Worker):
                                     amplitude = dset['amp'][i]
                                     ramp_type = dset['ramp_type'][i]
                                     painting_freq = dset['painting_freq'][i]
+                                    painting_list = dset['painting_list'][i]
                                     # Convert painting function string back to function
                                     painting_function_str = dset['painting_function'][i]
                                     painting_function_pickle = bytes(
@@ -1597,7 +1599,8 @@ class SpectrumWorker(Worker):
                                         amplitude,
                                         ramp_type,
                                         painting_function=painting_function,
-                                        painting_freq=painting_freq
+                                        painting_freq=painting_freq,
+                                        painting_list=painting_list
                                     )
                         waveforms.append(wvf)
 

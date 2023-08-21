@@ -352,9 +352,13 @@ class NI_DAQmxOutputWorker(Worker):
         for task, static, name in tasks:
             if not abort:
                 if not static:
+                    stop = True
                     try:
                         # Wait for task completion with a 2 second timeout:
                         task.WaitUntilTaskDone(2)
+                    except Exception as e: #### CHECK ME!!!
+                        print(e)
+                        stop = False
                     finally:
                         # Log where we were up to in sample generation, regardless of
                         # whether the above succeeded:
@@ -366,7 +370,8 @@ class NI_DAQmxOutputWorker(Worker):
                         total = npts.value if npts.value != 2 ** 64 - 1 else -1
                         msg = 'Stopping %s at sample %d of %d'
                         self.logger.info(msg, name, current, total)
-                task.StopTask()
+                if stop:    
+                    task.StopTask()
             task.ClearTask()
 
         # Remove the mirroring of the clock terminal, if applicable:
