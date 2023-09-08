@@ -362,14 +362,16 @@ class NI_DAQmxOutputWorker(Worker):
                     finally:
                         # Log where we were up to in sample generation, regardless of
                         # whether the above succeeded:
-                        task.GetWriteCurrWritePos(npts)
-                        task.GetWriteTotalSampPerChanGenerated(samples)
+                        print(npts)
+# Removed these lines 2023-08-30 - AP
+#                        task.GetWriteCurrWritePos(npts)
+#                        task.GetWriteTotalSampPerChanGenerated(samples)
                         # Detect -1 even though they're supposed to be unsigned ints, -1
                         # seems to indicate the task was not started:
-                        current = samples.value if samples.value != 2 ** 64 - 1 else -1
-                        total = npts.value if npts.value != 2 ** 64 - 1 else -1
-                        msg = 'Stopping %s at sample %d of %d'
-                        self.logger.info(msg, name, current, total)
+#                        current = samples.value if samples.value != 2 ** 64 - 1 else -1
+#                        total = npts.value if npts.value != 2 ** 64 - 1 else -1
+#                        msg = 'Stopping %s at sample %d of %d'
+#                        self.logger.info(msg, name, current, total)
                 if stop:    
                     task.StopTask()
             task.ClearTask()
