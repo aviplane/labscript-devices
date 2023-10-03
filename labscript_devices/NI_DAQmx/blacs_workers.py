@@ -363,7 +363,8 @@ class NI_DAQmxOutputWorker(Worker):
                         # Log where we were up to in sample generation, regardless of
                         # whether the above succeeded:
                         print(npts)
-# Removed these lines 2023-08-30 - AP
+# Removed these lines 2023-08-30 - Avikar.  This might cause some weird bugs, and I don't think it's good that I did this, but the 
+# experiment is working now.
 #                        task.GetWriteCurrWritePos(npts)
 #                        task.GetWriteTotalSampPerChanGenerated(samples)
                         # Detect -1 even though they're supposed to be unsigned ints, -1

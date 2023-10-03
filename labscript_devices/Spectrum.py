@@ -51,7 +51,7 @@ class pulse():
         ramp_type,
         painting_function=None,
         painting_freq=False,
-        painting_list = False
+        painting_list = False,
     ):
         self.start = start_freq
         self.end = end_freq
@@ -89,7 +89,7 @@ class waveform():
             modulation_frequencies=[0],
             modulation_amplitudes=[0],
             modulation_phases=[0],
-            mask=None):
+            mask=None, remove_self_interaction=False):
         self.time = time  # chunks
         self.duration = duration  # chunks
         self.port = port  # int
@@ -102,6 +102,7 @@ class waveform():
         self.modulation_amplitudes = modulation_amplitudes
         self.modulation_phases = modulation_phases
         self.has_mask = True
+        self.remove_self_interaction = remove_self_interaction
         if mask == None:
             mask = np.vectorize(lambda x: 1)
             self.has_mask = False
@@ -320,6 +321,37 @@ class Spectrum(IntermediateDevice):
         )
         return t
 
+    def comb_no_onsite(self, t, duration, freqs, amplitudes, phases, ch, loops=1,
+             modulation_frequencies=[0],
+             modulation_amplitudes=[0],
+             modulation_phases=[0], mask=None,
+             detuning=None
+             ):
+        """ Similar to the comb function, but creates a waveform with no onsite interaction by switching
+            between two different detunings.
+        """
+
+        # incomplete as of 9/28
+
+        t = self.sweep_comb(
+            t=t,
+            duration=duration,
+            start_freqs=freqs,
+            end_freqs=freqs,
+            amplitudes=amplitudes,
+            phases=phases,
+            ch=ch,
+            ramp_type='static',
+            loops=loops,
+            modulation_frequencies=modulation_frequencies,
+            modulation_amplitudes=modulation_amplitudes,
+            modulation_phases=modulation_phases,
+            mask=mask,
+            remove_self_interaction=True,
+            detuning=detuning
+        )
+        return t
+
     def check_waveform_parameters(self, t, duration, ch, loops, modulation_amplitudes):
         if self.sample_data.mode == b'Off':
             raise LabscriptError(
@@ -356,7 +388,9 @@ class Spectrum(IntermediateDevice):
         modulation_frequencies=[0],
         modulation_amplitudes=[0],
         modulation_phases=[0],
-        mask=None
+        mask=None,
+        remove_self_interaction=False,
+        detuning=0
     ):
         """
         Fundamental function that allows a user to initialize a waveform.
@@ -374,7 +408,7 @@ class Spectrum(IntermediateDevice):
         duration_c = t_end_c
 
         if (loops > 1):
-            # TODO: should this be here on in stop()? here is not mode dependent, but stop() can put it under sequence condition
+            # TODO: should this be here or in stop()? here is not mode dependent, but stop() can put it under sequence condition
             if (duration_c < self.duration_min_c):
                 duration_min_ns = 1e9 * self.samplesPerChunk * \
                     self.duration_min_c / self.sample_data.clock_freq  # nanoseconds
@@ -382,7 +416,11 @@ class Spectrum(IntermediateDevice):
                     'Periodic waveforms must be longer than {} ns'.format(duration_min_ns))
 
             if (delta_start != 0) or (delta_end != 0):
-                print('Warning: periodic waveform does not fill an integer number of chunks. Waveform will be extended, not zero padded. Loops will be corrected to preserve loops*duration.')
+                print(
+                    'Warning: periodic waveform does not fill an integer number of chunks. '
+                    'Waveform will be extended, not zero padded. '
+                    'Loops will be corrected to preserve loops*duration.'
+                )
                 print(f"delta_start: {delta_start}, delta_end: {delta_end}")
                 delta_s = delta_start + delta_end  # samples
                 duration_s = st.time_s_to_sa(
@@ -392,12 +430,15 @@ class Spectrum(IntermediateDevice):
                 delta_start = 0
                 delta_end = 0
 
-        wvf = waveform(t_start_c, duration_c, ch, loops, is_periodic=(
+        wvf = waveform(
+            t_start_c, duration_c, ch, loops, is_periodic=(
             loops > 1), delta_start=delta_start, delta_end=delta_end,
             modulation_frequencies=modulation_frequencies,
             modulation_amplitudes=modulation_amplitudes,
             modulation_phases=modulation_phases,
-            mask=mask)
+            mask=mask,
+            remove_self_interaction=remove_self_interaction
+        )
         assert len(start_freqs) == len(
             end_freqs), "Start and End frequencies must be same length"
         assert len(phases) == len(
@@ -409,9 +450,31 @@ class Spectrum(IntermediateDevice):
                 raise LabscriptError("Amplitude[" + str(i) + "] = " + str(
                     amplitudes[i]) + " is outside the allowed range [0,1]")
 
-            wvf.add_pulse(start_freqs[i], end_freqs[i],
-                          duration, phases[i], amplitudes[i], ramp_type,
-                          painting_function=None)
+            if remove_self_interaction:
+                # We want to break our signal up into segments and have different
+                # detunings.
+                print('Removing self interactions')
+                mod_freq = modulation_frequencies[0]
+                mod_period = 1 / mod_freq
+                mod_halfperiod = mod_period/2
+                nsegments = int(np.floor(duration / mod_period))
+                for ii in np.arange(nsegments):
+                    wvf.add_pulse(
+                        start_freqs[i]+detuning, end_freqs[i]+detuning,
+                        mod_halfperiod, phases[i], amplitudes[i], ramp_type,
+                        painting_function=None
+                    )
+                    wvf.add_pulse(
+                        start_freqs[i]-detuning, end_freqs[i]-detuning,
+                        mod_halfperiod, phases[i], amplitudes[i], ramp_type,
+                        painting_function=None
+                    )
+            else:
+                wvf.add_pulse(
+                    start_freqs[i], end_freqs[i],
+                    duration, phases[i], amplitudes[i], ramp_type,
+                    painting_function=None
+                )
 
         self.raw_waveforms.append(wvf)
 
@@ -573,7 +636,8 @@ class Spectrum(IntermediateDevice):
                          len(wvf.modulation_amplitudes)),
                         ('modulation_phases', float, len(wvf.modulation_phases)),
                         ('mask', dill_function_type), 
-                        ('has_mask', bool)]
+                        ('has_mask', bool),
+                        ('remove_self_interaction', bool)]
                     profile_table = np.zeros(1, dtype=profile_dtypes)
                     profile_table['time'] = wvf.time
                     profile_table['duration'] = wvf.duration
@@ -589,6 +653,7 @@ class Spectrum(IntermediateDevice):
                     profile_table['mask'] = str(
                         pickle.dumps(wvf.mask, recurse=True))
                     profile_table['has_mask'] = wvf.has_mask
+                    profile_table['remove_self_interaction'] = wvf.remove_self_interaction
                     grp.create_dataset('waveform_settings', data=profile_table)
 
                 if wvf.duration == 0:
@@ -1284,77 +1349,117 @@ class SpectrumWorker(Worker):
                         t = np.arange(0, dur, 1 / self.clock_freq)
 
                         pulse_data = np.zeros(len(t))
+                        pulse_data_temp = np.array([])
  
                         if hash(wvf) in self.pulse_dictionary.keys() and not wvf.has_mask:
                             print("Found waveform")
                             pulse_data = self.pulse_dictionary[hash(wvf)]
                         else:
-                            for pulse in wvf.pulses:
-                                if pulse.painting_list:
-                                    phase_values = 2 * pi * np.cumsum(pulse.painting_function(t) * 1/self.clock_freq, axis = 1)
-                                    output = np.sin(phase_values)/phase_values.shape[0]
-                                    c = np.sum(output, axis = 0)
-                                elif pulse.is_painted:
-                                    print("\t\t\t Generating painted pulse")
-                                    if pulse.painting_freq:
-                                        phase_values = 2 * np.pi * \
-                                            np.cumsum(pulse.painting_function(
-                                                t) * 1 / self.clock_freq)
-                                    else:
-                                        phase_values = 2 * pi / 360 * \
-                                            pulse.painting_function(t)
-                                    c = np.sin(phase_values)
+                            if wvf.remove_self_interaction:
+                                print("Removing self interaction")
+                                for pulse in wvf.pulses:
+                                    tsegment = np.arange(0, pulse.ramp_time, 1/self.clock_freq)
+                                    c = chirp(
+                                        tsegment,
+                                        f0=pulse.start,
+                                        t1=pulse.ramp_time,
+                                        f1=pulse.end,
+                                        method=method.decode(),
+                                        phi=pulse.phase
+                                    )
+                                    print("Ramp time", pulse.ramp_time)
+                                    print("Max of chirp", np.max(c))
+                                                                      
+                                    pulse_data_temp = np.append(pulse_data_temp,c)
+                                print("Max of pulse data", np.max(pulse_data_temp))  
+
+                                print("Pulse amplitude", pulse.amp)
+                                
+                                if len(pulse_data) > len(pulse_data_temp):
+                                    pulse_data[:len(pulse_data_temp)] = pulse_data_temp * (2**15 -1) * pulse.amp
                                 else:
-                                    if pulse.ramp_type != b'static':  # ramping
-                                        f1 = pulse.end
-                                        method = pulse.ramp_type
-                                    else:  # static
-                                        f1 = pulse.start
-                                        method = b'linear'
-                                    if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 5) == 0 and dur > 100e-6:
-                                        loop_duration = 1 / \
-                                            np.gcd(
-                                                int(self.clock_freq), int(f1))
-                                        small_t = np.arange(
-                                            0, loop_duration, 1 / self.clock_freq)
-                                        num_loops = int(dur / loop_duration)
-                                        small_chirp = chirp(
-                                            small_t, pulse.start, loop_duration, f1, phi=pulse.phase)
-                                        small_chirp_numba = numba_chirp(
-                                             small_t,
-                                             f0=pulse.start,
-                                             t1=loop_duration,
-                                             f1=f1,
-                                             phi=pulse.phase
-                                        )
-                                        assert np.max(np.abs(small_chirp - small_chirp_numba)) < 1e-10, "Numba small chirp not equivalent to scipy small chirp"
-                                        c2 = np.tile(small_chirp, num_loops)
-                                        if len(t) - len(c2) > 0:
-                                            print(
-                                                "You will end up with some problems here with phase loops.")
-                                        c = np.concatenate([
-                                            c2,
-                                            [0] * (len(t) - len(c2))
-                                        ])
+                                    pulse_data = pulse_data_temp[:len(pulse_data)] * (2**15 -1) * pulse.amp
+                            
+                            else:
+                                for pulse in wvf.pulses:
+                                    if pulse.painting_list:
+                                        phase_values = 2 * pi * np.cumsum(pulse.painting_function(t) * 1/self.clock_freq, axis = 1)
+                                        output = np.sin(phase_values)/phase_values.shape[0]
+                                        c = np.sum(output, axis = 0)
+                                    elif pulse.is_painted:
+                                        print("\t\t\t Generating painted pulse")
+                                        if pulse.painting_freq:
+                                            phase_values = 2 * np.pi * \
+                                                np.cumsum(pulse.painting_function(
+                                                    t) * 1 / self.clock_freq)
+                                        else:
+                                            phase_values = 2 * pi / 360 * \
+                                                pulse.painting_function(t)
+                                        c = np.sin(phase_values)
                                     else:
-                                        c = chirp(
-                                            t,
-                                            f0=pulse.start,
-                                            t1=pulse.ramp_time,
-                                            f1=f1,
-                                            method=method.decode(),
-                                            phi=pulse.phase
-                                        )
-                                        print(
-                                            f"\t\t\t Generated untiled chirp: t = {time.time() - start_time}")
+                                        if pulse.ramp_type != b'static':  # ramping
+                                            f1 = pulse.end
+                                            method = pulse.ramp_type
+                                        else:  # static
+                                            f1 = pulse.start
+                                            method = b'linear'
 
-                                pulse_data += pulse.amp * (2**15 - 1) * c
+                                        if pulse.start == f1 and np.round(int(f1 / 1e5) - f1 / 1e5, 5) == 0 and dur > 100e-6:
+                                            print(pulse.start)
+                                            loop_duration = 1 / \
+                                                np.gcd(
+                                                    int(self.clock_freq), int(f1))
+                                            small_t = np.arange(
+                                                0, loop_duration, 1 / self.clock_freq)
+                                            num_loops = int(dur / loop_duration)
+                                            small_chirp = chirp(
+                                                small_t, pulse.start, loop_duration, f1, phi=pulse.phase)
+                                            small_chirp_numba = numba_chirp(
+                                                small_t,
+                                                f0=pulse.start,
+                                                t1=loop_duration,
+                                                f1=f1,
+                                                phi=pulse.phase
+                                            )
+                                            assert np.max(np.abs(small_chirp - small_chirp_numba)) < 1e-10, "Numba small chirp not equivalent to scipy small chirp"
+                                            c2 = np.tile(small_chirp, num_loops)
+                                            if len(t) - len(c2) > 0:
+                                                print(
+                                                    "You will end up with some problems here with phase loops.")
+                                            c = np.concatenate([
+                                                c2,
+                                                [0] * (len(t) - len(c2))
+                                            ])
+                                        else:
+                                            c = chirp(
+                                                t,
+                                                f0=pulse.start,
+                                                t1=pulse.ramp_time,
+                                                f1=f1,
+                                                method=method.decode(),
+                                                phi=pulse.phase
+                                            )
+                                            print(
+                                                f"\t\t\t Generated untiled chirp: t = {time.time() - start_time}")
 
-                            modulation_waveform = np.sum([amp * (1 / 2 * np.cos(2 * np.pi * (freq * t) + phase * pi / 180) + 1 / 2)
-                                                          for freq, amp, phase in zip(wvf.modulation_frequencies,
-                                                                                      wvf.modulation_amplitudes,
-                                                                                      wvf.modulation_phases)], axis=0)
+                                    pulse_data += pulse.amp * (2**15 - 1) * c
 
+                            if wvf.remove_self_interaction:
+                                modulation_waveform = np.abs(np.sum(
+                                    [amp * np.cos(2 * np.pi * (freq * t) + phase * np.pi / 180)
+                                    for freq, amp, phase in zip(
+                                        wvf.modulation_frequencies, wvf.modulation_amplitudes, wvf.modulation_phases
+                                        )], axis=0
+                                ))
+                            else:
+                                modulation_waveform = np.sum(
+                                    [amp * (1 / 2 * np.cos(2 * np.pi * (freq * t) + phase * np.pi / 180) + 1 / 2)
+                                    for freq, amp, phase in zip(
+                                        wvf.modulation_frequencies, wvf.modulation_amplitudes, wvf.modulation_phases
+                                        )], axis=0
+                                )
+                            print("Min", np.min(pulse_data))
+                            print("Max", np.max(pulse_data))
                             total_modulation = np.max(modulation_waveform)#np.sum(wvf.modulation_amplitudes)
                             # Remove negative amplitudes
                             modulation_waveform = modulation_waveform - np.min(modulation_waveform) # + 1/2
@@ -1373,7 +1478,7 @@ class SpectrumWorker(Worker):
                             assert np.min(modulation_waveform) >= 0 and np.max(
                                 modulation_waveform) <= 1, "Modulation is too big"
                             assert pulse_data.shape == modulation_waveform.shape, "Modulation waveform has wrong shape"
-
+                            print(np.min(modulation_waveform), ",", np.max(modulation_waveform))
                             pulse_data = modulation_waveform * pulse_data
                             mask_values = wvf.mask(t) #should we only do this if has mask for extra speed?
 
@@ -1569,6 +1674,7 @@ class SpectrumWorker(Worker):
                                 wvf.modulation_phases = s['waveform_settings']['modulation_phases'].ravel(
                                 )
                                 wvf.has_mask = s['waveform_settings']['has_mask'][0]
+                                wvf.remove_self_interaction = s['waveform_settings']['remove_self_interaction'][0]
                                 mask_str = s['waveform_settings']['mask'][0]
                                 mask_pickle = bytes(
                                     eval(mask_str))
