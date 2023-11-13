@@ -451,55 +451,25 @@ class Spectrum(IntermediateDevice):
                     amplitudes[i]) + " is outside the allowed range [0,1]")
 
             if remove_self_interaction:
-                print("Waveform Duration", st.time_c_to_s(wvf.duration, self.sample_data.clock_freq))
-                ts = np.arange(
-                    0, st.time_c_to_s(wvf.duration, self.sample_data.clock_freq), 1 / self.sample_data.clock_freq
-                )
-
-                if wvf.has_mask:
-                    # if we have a mask, then we ignore the waveform modulation parameters
-                    modulation_waveform = wvf.mask(ts)
-                else:
-                    modulation_waveform = np.sum([
-                        amp * np.cos(2 * np.pi * (freq * ts) + phase * np.pi / 180)
-                        for freq, amp, phase in zip(
-                            wvf.modulation_frequencies, wvf.modulation_amplitudes, wvf.modulation_phases
-                        )
-                    ], axis=0)
-
-                zero_crossings = np.where(np.diff(np.sign(modulation_waveform)))[0]
-                detuning_jumps = np.array([0, *zero_crossings, len(modulation_waveform) - 1])
-                if len(zero_crossings) > 0:
-                    if zero_crossings[0] == 0:
-                        detuning_jumps = detuning_jumps[1:]                   
-                print("Zero crossings", zero_crossings)
-                print("Detuning Jumps", detuning_jumps)
-
+                # We want to break our signal up into segments and have different
+                # detunings.
                 print('Removing self interactions')
-
-                # mod_freq = modulation_frequencies[0]
-                # mod_period = 1 / mod_freq
-                # mod_halfperiod = mod_period/2
-                # # Changed to ceil as floor was causing errors
-                # nsegments = int(np.ceil(duration / mod_period))
-
-                # dsign = 1
-                for n, j in enumerate(detuning_jumps[:-1]):
-                    # Question: is this the best way of getting the sign? Could be broken if it's a zero
-                    # at j+1, for example.
-                    dsign = np.sign(modulation_waveform[j+1])
-                    # dsign *= -1
+                mod_freq = modulation_frequencies[0]
+                mod_period = 1 / mod_freq
+                mod_halfperiod = mod_period/2
+                # Changed to ceil as floor was causing errors
+                nsegments = int(np.ceil(duration / mod_period))
+                for ii in np.arange(nsegments):
                     wvf.add_pulse(
-                        start_freqs[i] + dsign * detuning,
-                        end_freqs[i] + dsign * detuning,
-                        ts[detuning_jumps[n+1]] - ts[detuning_jumps[n]], phases[i], amplitudes[i], ramp_type,
+                        start_freqs[i]+detuning, end_freqs[i]+detuning,
+                        mod_halfperiod, phases[i], amplitudes[i], ramp_type,
                         painting_function=None
                     )
-                    # wvf.add_pulse(
-                    #     start_freqs[i]-detuning, end_freqs[i]-detuning,
-                    #     mod_halfperiod, phases[i], amplitudes[i], ramp_type,
-                    #     painting_function=None
-                    # )
+                    wvf.add_pulse(
+                        start_freqs[i]-detuning, end_freqs[i]-detuning,
+                        mod_halfperiod, phases[i], amplitudes[i], ramp_type,
+                        painting_function=None
+                    )
             else:
                 wvf.add_pulse(
                     start_freqs[i], end_freqs[i],
@@ -1351,20 +1321,15 @@ class SpectrumWorker(Worker):
                 #            print(f"Beginning to write segments: t = {time.time() - start_time}")
             # Write segments
             for seg_idx, group in enumerate(self.waveform_groups):
-                buffer_size = int(
-                    self.num_chs * int(group.duration) * samples_per_chunk * bytes_per_sample
-                )
+                buffer_size = int(self.num_chs * int(group.duration)
+                                  * samples_per_chunk * bytes_per_sample)
 
                 if buffer_size < 0:
                     raise LabscriptError(
-                        "Buffer size is negative, indicating np.int32 overflow due "
-                        "to type inheritance from group.duration"
-                    )
+                        "Buffer size is negative, indicating np.int32 overflow due to type inheritance from group.duration")
                 if buffer_size > 2**29:
                     raise LabscriptError(
-                        "Buffer size is larger than 2**29, will cause memory error "
-                        "when calling ctypes.create_string_buffer"
-                    )
+                        "Buffer size is larger than 2**29, will cause memory error when calling ctypes.create_string_buffer")
 
                 pBuffer = ctypes.create_string_buffer(
                     buffer_size)  # should this be self.buffer?
@@ -1395,7 +1360,6 @@ class SpectrumWorker(Worker):
                                 print("Removing self interaction")
                                 for pulse in wvf.pulses:
                                     tsegment = np.arange(0, pulse.ramp_time, 1/self.clock_freq)
-                                    print("Ramp time", pulse.ramp_time)
                                     c = chirp(
                                         tsegment,
                                         f0=pulse.start,
@@ -1403,7 +1367,10 @@ class SpectrumWorker(Worker):
                                         f1=pulse.end,
                                         method=method.decode(),
                                         phi=pulse.phase
-                                    )                                                                      
+                                    )
+                                    print("Ramp time", pulse.ramp_time)
+                                    print("Max of chirp", np.max(c))
+                                                                      
                                     pulse_data_temp = np.append(pulse_data_temp,c)
                                 print("Max of pulse data", np.max(pulse_data_temp))  
 
@@ -1483,7 +1450,7 @@ class SpectrumWorker(Worker):
                                     [amp * np.cos(2 * np.pi * (freq * t) + phase * np.pi / 180)
                                     for freq, amp, phase in zip(
                                         wvf.modulation_frequencies, wvf.modulation_amplitudes, wvf.modulation_phases
-                                    )], axis=0
+                                        )], axis=0
                                 ))
                             else:
                                 modulation_waveform = np.sum(
@@ -1492,12 +1459,9 @@ class SpectrumWorker(Worker):
                                         wvf.modulation_frequencies, wvf.modulation_amplitudes, wvf.modulation_phases
                                         )], axis=0
                                 )
-
-                                
-
                             print("Min", np.min(pulse_data))
                             print("Max", np.max(pulse_data))
-                            total_modulation = np.max(modulation_waveform) # np.sum(wvf.modulation_amplitudes)
+                            total_modulation = np.max(modulation_waveform)#np.sum(wvf.modulation_amplitudes)
                             # Remove negative amplitudes
                             modulation_waveform = modulation_waveform - np.min(modulation_waveform) # + 1/2
                             # Scale top to be <= 1
@@ -1510,7 +1474,8 @@ class SpectrumWorker(Worker):
                             #
                             #
                             # modulation_waveform = modulation_waveform + 1/2
-                            modulation_waveform = amplitude_compensator(modulation_waveform)
+                            modulation_waveform = amplitude_compensator(
+                                modulation_waveform)
                             assert np.min(modulation_waveform) >= 0 and np.max(
                                 modulation_waveform) <= 1, "Modulation is too big"
                             assert pulse_data.shape == modulation_waveform.shape, "Modulation waveform has wrong shape"
@@ -1523,10 +1488,6 @@ class SpectrumWorker(Worker):
                             assert np.max(
                                 mask_values) <= 1, "Mask gets too large"
                             assert pulse_data.shape == mask_values.shape, "Mask must have same shape as waveform"
-
-                            if wvf.remove_self_interaction:                            
-                                mask_values = np.abs(mask_values)
-
                             print(np.min(mask_values), np.max(mask_values), "MASK")
                             pulse_data = mask_values * pulse_data
                             print(np.min(pulse_data), np.max(pulse_data), "data")
