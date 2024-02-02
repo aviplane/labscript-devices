@@ -339,6 +339,7 @@ class NI_DAQmxOutputWorker(Worker):
         # Stop output tasks and call program_manual. Only call StopTask if not aborting.
         # Otherwise results in an error if output was incomplete. If aborting, call
         # ClearTask only.
+
         npts = uInt64()
         samples = uInt64()
         tasks = []
@@ -385,7 +386,7 @@ class NI_DAQmxOutputWorker(Worker):
         if abort:
             # Reprogram the initial states:
             self.program_manual(self.initial_values)
-
+        
         return True
 
     def abort_transition_to_buffered(self):
@@ -574,32 +575,58 @@ class NI_DAQmxAcquisitionWorker(Worker):
             self.h5_file = None
             self.buffered_rate = None
             return True
+        
+        h5_file = self.h5_file
 
-        with h5py.File(self.h5_file, 'a') as hdf5_file:
-            data_group = hdf5_file['data']
-            data_group.create_group(self.device_name)
-            waits_in_use = len(hdf5_file['waits']) > 0
-
-        if self.buffered_chans is not None and not self.acquired_data:
-            msg = """No data was acquired. Perhaps the acquisition task was not
-                triggered to start, is the device connected to a pseudoclock?"""
-            raise RuntimeError(dedent(msg))
-        # Concatenate our chunks of acquired data and recast them as a structured
-        # array with channel names:
-        if self.acquired_data:
-            start_time = time.time()
-            dtypes = [(chan, np.float32) for chan in self.buffered_chans]
-            raw_data = np.concatenate(self.acquired_data).view(dtypes)
-            raw_data = raw_data.reshape((len(raw_data),))
-            self.acquired_data = None
-            self.buffered_chans = None
-            self.extract_measurements(raw_data, waits_in_use)
-            self.h5_file = None
-            self.buffered_rate = None
-            msg = 'data written, time taken: %ss' % str(time.time() - start_time)
+        if h5_file is None:
+            print("h5_file is None")
         else:
-            msg = 'No acquisitions in this shot.'
-        self.logger.info(msg)
+            print("h5_file is gucci")
+
+        def readwrite_in_background():
+            before_h5_read_time = time.time()
+            try:
+                with h5py.File(h5_file, 'a') as hdf5_file:
+                    data_group = hdf5_file['data']
+                    data_group.create_group(self.device_name)
+                    waits_in_use = len(hdf5_file['waits']) > 0
+            except ValueError: ### Added 12/30/2023 - does this help??
+                print("VALUE ERROR")
+                return True 
+            except TypeError:
+                """After adding threading, we were running into issues where
+                   the h5_file is marked as None when you are trying to read.
+                   This catches that error.
+                """
+                print("Can't read because h5_file is None")
+                return True
+            if self.buffered_chans is not None and not self.acquired_data:
+                msg = """No data was acquired. Perhaps the acquisition task was not
+                    triggered to start, is the device connected to a pseudoclock?"""
+                raise RuntimeError(dedent(msg))
+            
+            self.logger.info(f"h5 read took {time.time() - before_h5_read_time}")
+
+            # Concatenate our chunks of acquired data and recast them as a structured
+            # array with channel names:
+            if self.acquired_data:
+                start_time = time.time()
+                dtypes = [(chan, np.float32) for chan in self.buffered_chans]
+                raw_data = np.concatenate(self.acquired_data).view(dtypes)
+                raw_data = raw_data.reshape((len(raw_data),))
+                self.acquired_data = None
+                self.buffered_chans = None
+                self.extract_measurements(raw_data, waits_in_use)
+                self.h5_file = None
+                # self.buffered_rate = None
+                msg = 'data written, time taken: %ss' % str(time.time() - start_time)
+            else:
+                msg = 'No acquisitions in this shot.'
+            self.logger.info(msg)
+        
+        rw_thread = threading.Thread(target=readwrite_in_background)
+
+        rw_thread.start()
 
         return True
 
@@ -909,6 +936,7 @@ class NI_DAQmxWaitMonitorWorker(Worker):
     def transition_to_manual(self, abort=False):
         self.logger.debug('transition_to_manual')
         self.stop_tasks(abort)
+        before_analyze_waits_time = time.time()
         if not abort and self.wait_table is not None:
             # Let's work out how long the waits were. The absolute times of each edge on
             # the wait monitor were:
@@ -946,6 +974,8 @@ class NI_DAQmxWaitMonitorWorker(Worker):
             with h5py.File(self.h5_file, 'a') as hdf5_file:
                 hdf5_file.create_dataset('/data/waits', data=data)
             self.wait_durations_analysed.post(self.h5_file)
+
+        self.logger.info(f"wait analysis took {time.time() - before_analyze_waits_time}")
 
         self.h5_file = None
         self.semiperiods = None
