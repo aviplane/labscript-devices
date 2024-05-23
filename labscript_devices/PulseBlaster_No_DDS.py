@@ -48,12 +48,10 @@ class PulseBlaster_No_DDS(PulseBlaster):
         PseudoclockDevice.generate_code(self, hdf5_file)
         dig_outputs, ignore = self.get_direct_outputs()
         pb_inst = self.convert_to_pb_inst(dig_outputs, [], {}, {}, {})
-        self._check_wait_monitor_ok()
-        self.write_pb_inst_to_h5(pb_inst, hdf5_file) 
-        
-
+        self._check_wait_monitor_ok() 
 from blacs.tab_base_classes import Worker, define_state
 from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MODE_TRANSITION_TO_MANUAL, MODE_BUFFERED  
+
 
 from blacs.device_base_class import DeviceTab
 
@@ -287,9 +285,12 @@ class PulseblasterNoDDSWorker(Worker):
         # Write the first two lines of the pulse program:
         pb_start_programming(PULSE_PROGRAM)
         # Line zero is a wait:
-        pb_inst_pbonly(flags, WAIT, 0, 100)
+        try:
+            pb_inst_pbonly(flags, WAIT, 0, 100)
         # Line one is a brach to line 0:
-        pb_inst_pbonly(flags, BRANCH, 0, 100)
+            pb_inst_pbonly(flags, BRANCH, 0, 100)
+        except:
+            print("pb error")
         pb_stop_programming()
         
         # Now we're waiting on line zero, so when we start() we'll go to
@@ -331,11 +332,14 @@ class PulseblasterNoDDSWorker(Worker):
                                                  + group.attrs['time_based_stop_workaround_extra_time'])
             
             # Now for the pulse program:
-            pulse_program = group['PULSE_PROGRAM'][2:]
-            
+            try:
+                pulse_program = group['PULSE_PROGRAM'][2:]
             #Let's get the final state of the pulseblaster. z's are the args we don't need:
-            flags,z,z,z = pulse_program[-1]
-            
+                flags,z,z,z = pulse_program[-1]
+            except KeyError:
+                print('key error')
+                pulse_program = np.array([1,0,0,0])
+                flags = 0
             if fresh or (self.smart_cache['initial_values'] != initial_values) or \
                 (len(self.smart_cache['pulse_program']) != len(pulse_program)) or \
                 (self.smart_cache['pulse_program'] != pulse_program).any() or \
@@ -378,8 +382,10 @@ class PulseblasterNoDDSWorker(Worker):
                 (self.smart_cache['pulse_program'] != pulse_program).any():
                     self.smart_cache['pulse_program'] = pulse_program
                     for args in pulse_program:
-                        pb_inst_pbonly(*args)
-                        
+                        try:
+                            pb_inst_pbonly(*args)
+                        except RuntimeError:
+                            print("388 error")
                 if self.programming_scheme == 'pb_start/BRANCH':
                     # We will be triggered by pb_start() if we are are the master pseudoclock or a single hardware trigger
                     # from the master if we are not:

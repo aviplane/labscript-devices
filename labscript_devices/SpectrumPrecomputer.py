@@ -1,4 +1,7 @@
-""" Like the spectrum precomputer, but we also save the waveform groups."""
+""" Like the spectrum precomputer, but we also save the waveform groups.
+
+The Spectrum Precomputer, but made so you can run multiple at once.
+"""
 
 from labscript import IntermediateDevice, Device, LabscriptError, DigitalOut
 from labscript_devices import BLACS_tab
@@ -23,11 +26,20 @@ from .spcm.numba_chirp import *
 
 from scipy.signal import chirp
 import ctypes
+
+import os
 import time
+import pathlib
+
 from labscript_utils import h5_lock
 import h5py
+import random
+
 
 blacs_client = BlacsClient(host="171.64.56.36", port=25227)
+
+
+PRECOMPUTE_FOLDER = "C:\\labscript-suite\\labscript-devices\\labscript_devices\\SpectrumPrecompute\\"
 
 ### get files in queue
 
@@ -66,10 +78,9 @@ class pulse:
     def __str__(self):
         # Random number to never use smart programming
         if self.is_painted:
-            s = f"Painted sweep using function {self.painting_function} painting frequency: {self.painting_freq}, painting_list: {self.painting_list}"
+            s = f"Painted sweep using function {self.painting_function} painting frequency: {self.painting_freq}, painting_list: {self.painting_list}, {np.random.random()} random number"
             try:
                 s = s + f"{self.painting_function.extra_params}"
-                print(s)
             except Exception as e:
                 print(e)
             return s
@@ -213,20 +224,23 @@ class sequence_instr:
         self.loops = loops
         self.next_step = next_step
 
+
 import ntpath
+import copy
 
 class SpectrumPrecomputer:
-    def __init__(self, shot: str, pulse_dictionary: dict = {}):
+    def __init__(self, shot: str, pulse_dictionary):
         self.shot = shot
         self.base_name = self.shot.split(".")[0]
         self.file_name = ntpath.basename(self.shot)
         self.numpy_name = self.file_name.split(".")[0]
-        self.output_folder = "C:\\labscript-suite\\labscript-devices\\labscript_devices\\SpectrumPrecompute\\"
+        self.output_folder = PRECOMPUTE_FOLDER
         self.previous_settings = None
         self.max_channels = 4
         self.samplesPerChunk = 32
         self.bytesPerSample = 2
         self.pulse_dictionary = pulse_dictionary
+
 
     def compute_waveform(self):
         start_time = time.time()
@@ -309,7 +323,6 @@ class SpectrumPrecomputer:
         # Loop the sequence back to the zeroth step
         self.sequence_instrs[len(self.sequence_instrs) - 1].next_step = 0
 
-
         # Merge and sort groups in time order
         self.waveform_groups.extend(dummy_groups)
         self.waveform_groups = sorted(self.waveform_groups, key=lambda k: k.time)
@@ -391,10 +404,7 @@ class SpectrumPrecomputer:
                     pulse_data = np.zeros(len(t))
                     pulse_data_temp = np.array([])
 
-                    if (
-                        hash(wvf) in self.pulse_dictionary.keys()
-                        and not wvf.has_mask
-                    ):
+                    if hash(wvf) in self.pulse_dictionary.keys() and not wvf.has_mask:
                         if verbose:
                             print("Found waveform")
                         pulse_data = self.pulse_dictionary[hash(wvf)]
@@ -438,7 +448,9 @@ class SpectrumPrecomputer:
                                             axis=1,
                                         )
                                     )
-                                    output = np.sin(phase_values) / phase_values.shape[0]
+                                    output = (
+                                        np.sin(phase_values) / phase_values.shape[0]
+                                    )
                                     c = np.sum(output, axis=0)
                                 elif pulse.is_painted:
                                     if pulse.painting_freq:
@@ -497,7 +509,9 @@ class SpectrumPrecomputer:
                                         #     < 1e-10
                                         # ), "Numba small chirp not equivalent to scipy small chirp"
                                         c2 = np.tile(small_chirp, num_loops)
-                                        c = np.concatenate([c2, [0] * (len(t) - len(c2))])
+                                        c = np.concatenate(
+                                            [c2, [0] * (len(t) - len(c2))]
+                                        )
                                     else:
                                         c = chirp(
                                             t,
@@ -507,7 +521,6 @@ class SpectrumPrecomputer:
                                             method=method.decode(),
                                             phi=pulse.phase,
                                         )
-
 
                                 pulse_data += pulse.amp * (2**15 - 1) * c
 
@@ -652,18 +665,28 @@ class SpectrumPrecomputer:
     def transition_to_buffered(self, device_name):
         self.output_name = self.base_name + f"_spectrum_{device_name}.npy"
         self.numpy_groups_name = self.numpy_name + f"_spectrum_{device_name}_groups.npy"
-        self.device_dict_name = self.output_folder + self.numpy_name + f"_spectrum_{device_name}_dict.npy"
+        self.device_dict_name = (
+            self.output_folder + self.numpy_name + f"_spectrum_{device_name}_dict.npy"
+        )
         self.numpy_name = self.numpy_name + f"_spectrum_{device_name}.npy"
         self.output_name = self.output_folder + self.numpy_name
         self.output_groups_name = self.output_folder + self.numpy_groups_name
-        
+
+        if os.path.isfile(self.output_name):
+            raise FileExistsError(f"A file exists at {self.output_name}")
+
+        if not os.path.isfile(self.shot):
+            raise FileExistsError(f"Shot probably already ran {self.shot}")
+
+
+
         self.waveform_groups = []
         with h5py.File(self.shot, "r") as file:
             device = file["/devices/" + device_name]
             try:
                 device_dict = self.h5group_to_dict(device)
                 print(f"Saving dict! {self.device_dict_name}")
-                np.save(self.device_dict_name, device_dict, allow_pickle = True)
+                np.save(self.device_dict_name, device_dict, allow_pickle=True)
 
                 np.testing.assert_equal(device_dict, self.previous_settings)
                 self.generate_samples = False
@@ -760,9 +783,10 @@ class SpectrumPrecomputer:
                                     painting_list = dset["painting_list"][i]
                                     # Convert painting function string back to function
                                     painting_function_str = dset["painting_function"][i]
-                                    painting_function_pickle = bytes(
-                                        eval(painting_function_str)
+                                    painting_function_pickle = eval(
+                                        painting_function_str
                                     )
+
                                     painting_function = pickle.loads(
                                         painting_function_pickle
                                     )
@@ -805,6 +829,7 @@ class SpectrumPrecomputer:
 #### save spectrum
 all_files = {}
 all_groups_files = {}
+all_dict_files = {}
 import time
 import multiprocessing
 
@@ -814,6 +839,7 @@ def generate_npy(shots):
         shot = shots.get()
         spc = SpectrumPrecomputer(shot)
         spc.transition_to_buffered("SpectrumM4X")
+        all_dict_files[shot] = spc.device_dict_name
         all_files[shot], all_groups_files[shot] = spc.compute_waveform()
     except FileNotFoundError:
         print(f"{shot} does not exist anymore")
@@ -822,33 +848,77 @@ def generate_npy(shots):
     except Exception as e:
         print("Some other error")
 
+
 def main_loop():
     all_files = {}
     pulse_dictionary = {}
 
     while True:
         all_shots = blacs_client.queued_shots()
-        for shot in all_shots:
+
+        # Every check_every_n shots, we check for more shots from BLACS.
+        check_every_n = 5
+        counter = 0
+        completed_shots = []
+
+        start_time = time.time()
+
+        # While there are shots in all_shots
+        while all_shots:
+            # Choose randomly from the final ten shots
+            nextn = random.randrange(
+                min(2 * check_every_n, len(all_shots) - 1), len(all_shots)
+            )
+            shot = all_shots.pop(nextn)
+            time.sleep(.3)
             try:
+                print(f"\nComputing shot: {shot}\n\n")
+
                 # don't compute if we've already generated a file for it
                 if shot not in all_files:
                     spc = SpectrumPrecomputer(shot, pulse_dictionary)
+                    # Should throw a FileExistsError if file was already precomputed
                     spc.transition_to_buffered("SpectrumM4X")
                     if spc.generate_samples:
                         all_files[shot], all_groups_files[shot] = spc.compute_waveform()
                     pulse_dictionary = spc.pulse_dictionary
+                    all_dict_files[shot] = spc.device_dict_name
+
+                if shot not in completed_shots:
+                    completed_shots.append(shot)
+            except FileExistsError as e:
+                print(e)
+                if shot not in completed_shots:
+                    completed_shots.append(shot)
             except FileNotFoundError:
                 print(f"{shot} does not exist anymore")
             except AttributeError:
+                print("Testing origin...")
                 traceback.print_exc()
             except OSError as e:
                 traceback.print_exc()
                 return
+
+            counter += 1
+            if counter >= check_every_n:
+                print("Checking for new shots")
+                all_new_shots = blacs_client.queued_shots()
+
+                # Note: we only use new_shots for this print statements
+                new_shots = list(
+                    set(all_new_shots) - set(all_shots) - set(completed_shots)
+                )
+                print("\nNew shots are:", new_shots, "\n")
+
+                # This rids us of shots already run as well as completed shots
+                all_shots = list(set(all_new_shots) - set(completed_shots))
+                counter = 0
+
             # spc.transition_to_buffered("TweezerSpectrum")
             # if spc.generate_samples:
             #     all_files[shot] = spc.compute_waveform()
         all_shots = blacs_client.queued_shots()
-        time.sleep(4)
+        time.sleep(2)
         for shot in list(all_files.keys()):
             # If the shot is no longer in BLACS, then it
             # has been run by BLACS or otherwise removed,
@@ -869,6 +939,12 @@ def main_loop():
                     print("Error deleting groups file!")
                     traceback.print_exc()
                 try:
+                    # Delete the precomputed groups file
+                    os.remove(all_dict_files[shot])
+                except:
+                    print("Error deleting dict file!")
+                    traceback.print_exc()
+                try:
                     del all_files[shot]
                 except:
                     print("Error in deletion from dictionary")
@@ -878,8 +954,25 @@ def main_loop():
                 except:
                     print("Error in deletion from groups dictionary")
                     traceback.print_exc()
+                try:
+                    del all_dict_files[shot]
+                except:
+                    print("Error in deletion from groups dictionary")
+                    traceback.print_exc()
 
-        time.sleep(1)
+        try:  
+            filenames = next(os.walk(PRECOMPUTE_FOLDER))[2]
+            halfday = 12 * 60 * 60
+            
+            print("Checking for old files...")
+            for filename in filenames:
+                if time.time() > os.stat(PRECOMPUTE_FOLDER+filename).st_mtime + halfday:
+                    os.remove(PRECOMPUTE_FOLDER+filename)
+                    print(f"Deleted {filename}")
+        except:
+            print("Error in deleting old files")
+            traceback.print_exc()
+
 
 
 if __name__ == "__main__":

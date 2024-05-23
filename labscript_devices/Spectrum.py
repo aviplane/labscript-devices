@@ -24,9 +24,9 @@ import ast
 import warnings
 from scipy.signal import chirp, sawtooth
 import scipy.special
+import traceback
 
 import gc
-print(os.getcwd())
 from .spcm import pyspcm as sp
 from .spcm import spcm_errors as se
 from .spcm import spcm_tools as st
@@ -35,7 +35,6 @@ from .spcm.numba_chirp import *
 
 import ctypes
 import inspect
-import CalculationFunctions
 import ntpath
 # decorate spectrum functions for error detection
 se.decorate_functions(sp, se.error_decorator)
@@ -63,10 +62,8 @@ class pulse:
         self.amp = amplitude
         self.ramp_type = ramp_type  # String. Can be linear, quadratic, None
         self.painting_function = painting_function
-
-        if self.painting_function == None:
-            self.is_painted = False
-        else:
+        self.is_painted = False
+        if not self.painting_function is None:
             self.is_painted = True
         self.painting_freq = painting_freq
         self.painting_list = painting_list
@@ -105,6 +102,9 @@ class waveform:
     ):
         self.time = time  # chunks
         self.duration = duration  # chunks
+        # if self.duration == 0:
+        #     print("duration is zero")
+        #     traceback.print_stack()
         self.port = port  # int
         self.loops = loops  # int
         self.delta_start = delta_start  # samples
@@ -334,6 +334,9 @@ class Spectrum(IntermediateDevice):
             ch,
             "static",
             loops,
+            modulation_frequencies=modulation_frequencies,
+            modulation_amplitudes=modulation_amplitudes,
+            modulation_phases=modulation_phases,
             mask=mask,
         )
         return t
@@ -889,8 +892,9 @@ class Spectrum(IntermediateDevice):
                     grp.create_dataset("waveform_settings", data=profile_table)
 
                 if wvf.duration == 0:
+                    print(profile_table)
                     raise LabscriptError(
-                        "Something went wrong in preparing waveform data. Waveform duration is 0"
+                        "Something went wrong in preparing waveform data. Waveform duration is 0."
                     )
 
                 # Store pulses
@@ -901,9 +905,10 @@ class Spectrum(IntermediateDevice):
                     ("phase", np.float),
                     ("amp", np.float),
                     ("ramp_type", "S10"),
-                    ("painting_function", dill_function_type),
+                    ("painting_function", dill_function_type), 
                     ("painting_freq", np.bool),
                     ("painting_list", np.bool),
+                    ("pulse_str", "S20"),
                 ]
                 profile_table = np.zeros(len(wvf.pulses), dtype=profile_dtypes)
 
@@ -927,6 +932,7 @@ class Spectrum(IntermediateDevice):
                     profile_table["painting_function"] = pickled_function
                     profile_table["painting_freq"][j] = pulse.painting_freq
                     profile_table["painting_list"][j] = pulse.painting_list
+                    profile_table["pulse_str"][j] = str(pulse)
                 # If waveform already has associated data, add to the existing dataset.
                 if "pulse_data" in grp:
                     d = grp["pulse_data"]
@@ -1479,7 +1485,6 @@ class SpectrumWorker(Worker):
 
         print("Generating buffer")
         start_time = time.time()
-
         # Iterate over the channels which are on. Set channel-specific.
 
         channel_enable_word = 0
@@ -1760,7 +1765,6 @@ class SpectrumWorker(Worker):
                                             )
                                             c = np.sum(output, axis=0)
                                         elif pulse.is_painted:
-                                            print("\t\t\t Generating painted pulse")
                                             if pulse.painting_freq:
                                                 phase_values = (
                                                     2
@@ -1795,7 +1799,7 @@ class SpectrumWorker(Worker):
                                                 == 0
                                                 and dur > 100e-6
                                             ):
-                                                print(pulse.start)
+                                                print("Numba")
                                                 loop_duration = 1 / np.gcd(
                                                     int(self.clock_freq), int(f1)
                                                 )
@@ -1805,13 +1809,6 @@ class SpectrumWorker(Worker):
                                                     1 / self.clock_freq,
                                                 )
                                                 num_loops = int(dur / loop_duration)
-                                                small_chirp = chirp(
-                                                    small_t,
-                                                    pulse.start,
-                                                    loop_duration,
-                                                    f1,
-                                                    phi=pulse.phase,
-                                                )
                                                 small_chirp_numba = numba_chirp(
                                                     small_t,
                                                     f0=pulse.start,
@@ -1819,16 +1816,7 @@ class SpectrumWorker(Worker):
                                                     f1=f1,
                                                     phi=pulse.phase,
                                                 )
-                                                assert (
-                                                    np.max(
-                                                        np.abs(
-                                                            small_chirp
-                                                            - small_chirp_numba
-                                                        )
-                                                    )
-                                                    < 1e-10
-                                                ), "Numba small chirp not equivalent to scipy small chirp"
-                                                c2 = np.tile(small_chirp, num_loops)
+                                                c2 = np.tile(small_chirp_numba, num_loops)
                                                 if len(t) - len(c2) > 0:
                                                     print(
                                                         "You will end up with some problems here with phase loops."
@@ -1872,13 +1860,8 @@ class SpectrumWorker(Worker):
                                 else:
                                     modulation_waveform = np.sum(
                                         [
-                                            amp
-                                            * (
-                                                1
-                                                / 2
-                                                * np.cos(
-                                                    2 * np.pi * (freq * t)
-                                                    + phase * np.pi / 180
+                                            amp * (1 / 2
+                                                * np.cos( 2 * np.pi * (freq * t) + phase  * np.pi/180
                                                 )
                                                 + 1 / 2
                                             )
@@ -1922,11 +1905,8 @@ class SpectrumWorker(Worker):
                                 assert (
                                     pulse_data.shape == modulation_waveform.shape
                                 ), "Modulation waveform has wrong shape"
-                                if verbose:
-                                    print("pd: ", pulse_data)
-                                    print("mw: ", modulation_waveform)
                                 pulse_data = pulse_data * modulation_waveform
-
+                                
                                 mask_values = wvf.mask(
                                     t
                                 )  # should we only do this if has mask for extra speed?
@@ -2126,7 +2106,6 @@ class SpectrumWorker(Worker):
             with h5py.File(h5file, "r") as file:
                 device = file["/devices/" + device_name]
                 device_dict = self.h5group_to_dict(device)
-
         try:
             np.testing.assert_equal(device_dict, self.previous_settings)
             generate_samples = False

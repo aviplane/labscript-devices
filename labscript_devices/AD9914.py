@@ -381,14 +381,11 @@ class AD9914Worker(Worker):
 
         self.SetPortConfig()
         self.Reset()
-        print("finished self.Resst")
         if (self.usePLL):
             # *** Use 244x PLL multiplier w/ 10MHz clock input
             reg2 = bytearray(b"\x1C\x7A\x04\x00")
             self.WriteRegister(2, reg2)
-        print("Beginning self.CAL")
         self.CAL()
-        print("Finished running self.CAL")
 
         reg0 = bytearray(b"\x08\x01\x01\x00")
         reg1 = bytearray(b"\x00\x09\x80\x00")
@@ -419,16 +416,13 @@ class AD9914Worker(Worker):
 
 
     def CAL(self):
-        print("Reading register")
         reg03=self.ReadRegister(0x03)
         reg03[3] |= 0x01
         self.WriteRegister(0x03,reg03,True)
         reg03[3] &= 0xFE
         time.sleep(0.4)
-        print("Wrote register time 0")
         self.WriteRegister(0x03,reg03,True)
         time.sleep(0.1)
-        print("Done writing registers")
         if (self.usePLL):
             # *** Calibrate 244x PLL multiplier w/ 10MHz clock input
             reg00=self.ReadRegister(0x00)

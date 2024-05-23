@@ -420,6 +420,7 @@ class PulseBlaster(PseudoclockDevice):
         j += 2
         
         flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
+        print(f'the pseudclock is {self.pseudoclock}') #ESC testing 05/16/24
         for k, instruction in enumerate(self.pseudoclock.clock):
             if instruction == 'WAIT':
                 # This is a wait instruction. Repeat the last instruction but with a 100ns delay and a WAIT op code:
